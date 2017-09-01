@@ -207,23 +207,7 @@ diff -urN linux-4.9.11/drivers/iio/adc/atmel-samv7_adc.c linux-samv7-4.9.x-fdpic
 +	unsigned int f_per, prescal, startup, afec_clk;
 +
 +	f_per = clk_get_rate(st->per_clk);
-+/*
-+	f_per: 150000000
-+	sample_freq: 15000
-+	prescale: 
 +
-+	afec_clk:	(f_per / PRESCALE) + 1	
-+	sample_freq * 23 = (f_per / PRESCALE) + 1	
-+	(sample_freq * 23) - 1 = f_per / PRESCALE
-+
-+	PRESCALE = f_per / (sample_freq * 23) - 1
-+
-+	MAX_SAMPLE_FREQ = ((f_per / PRESCALE) + 1) / 23 = 
-+	(150000000 / (1 + 1)) / 23
-+	MAX_SAMPLE_FREQ = = 1740000
-+	MIN_SAMPLE_FREQ = = 174000
-+
-+*/
 +	afec_clk = sample_freq * AFEC_CONVERSION_TIME;
 +	if (afec_clk > AFEC_MAX_CLOCK_HZ || afec_clk < AFEC_MIN_CLOCK_HZ)
 +		return -1;
