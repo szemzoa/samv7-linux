@@ -1,0 +1,374 @@
+diff -urN linux-4.9.11/drivers/iio/dac/Kconfig linux-samv7-4.9.x-fdpic-mpu/drivers/iio/dac/Kconfig
+--- linux-4.9.11/drivers/iio/dac/Kconfig	2016-12-11 14:17:54.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/drivers/iio/dac/Kconfig	2017-02-13 06:52:31.000000000 -0500
+@@ -274,4 +274,14 @@
+ 	  This driver can also be built as a module. If so, the module will
+ 	  be called vf610_dac.
+ 
++config SAMV7_DAC
++	tristate "Atmel SAMV7 DAC driver"
++	depends on OF
++	depends on HAS_IOMEM
++	help
++	  Say yes here to support Atmel SAMV7 digital-to-analog converter.
++
++	  This driver can also be built as a module. If so, the module will
++	  be called samv7_dac.
++
+ endmenu
+diff -urN linux-4.9.11/drivers/iio/dac/Makefile linux-samv7-4.9.x-fdpic-mpu/drivers/iio/dac/Makefile
+--- linux-4.9.11/drivers/iio/dac/Makefile	2016-12-11 14:17:54.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/drivers/iio/dac/Makefile	2017-02-13 06:52:31.000000000 -0500
+@@ -29,3 +29,4 @@
+ obj-$(CONFIG_MCP4725) += mcp4725.o
+ obj-$(CONFIG_MCP4922) += mcp4922.o
+ obj-$(CONFIG_VF610_DAC) += vf610_dac.o
++obj-$(CONFIG_SAMV7_DAC) += samv7_dac.o
+diff -urN linux-4.9.11/drivers/iio/dac/samv7_dac.c linux-samv7-4.9.x-fdpic-mpu/drivers/iio/dac/samv7_dac.c
+--- linux-4.9.11/drivers/iio/dac/samv7_dac.c	1969-12-31 19:00:00.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/drivers/iio/dac/samv7_dac.c	2017-02-08 07:56:15.000000000 -0500
+@@ -0,0 +1,344 @@
++/*
++ * IIO DAC driver for Atmel SAMV7 SoC
++ *
++ * Copyright (C) 2017 Andras Szemzo <szemzo.andras@gmail.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ */
++
++#define DEBUG
++
++#include <linux/clk.h>
++#include <linux/err.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/driver.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++
++#define SAMV7_DAC_CHANNELS	2
++#define SAMV7_DAC_MAX_CLOCK_HZ	12000000
++
++#define SAMV7_DAC_CR		0x00
++#define SAMV7_DAC_MR		0x04
++#define SAMV7_DAC_CHER		0x10
++#define SAMV7_DAC_CHDR		0x14
++#define SAMV7_DAC_CHSR		0x18
++#define SAMV7_DAC_CDRx		0x1c
++#define SAMV7_DAC_ACR		0x94
++#define SAMV7_DAC_VERSION	0xfc
++
++#define DAC_SWRST		BIT(1)
++#define DAC_CDRx(chan)		(SAMV7_DAC_CDRx + (chan << 2))
++#define PRESCALE_MASK(x)	((x) & 0xF)	
++#define PRESCALE_SHIFT		24	
++#define DAC_DATx(x)		((x) & 0xFFF)
++
++#define IBCTRL_BYPASS		0x00
++#define IBCTRL_LOW_POWER	0x01
++#define IBCTRL_HIGH_POWER	0x03
++#define IBCTRL_CH(chan)		(chan << 1)
++#define IBCTRL(reg, chan, val)	((reg & ~(0x3 << IBCTRL_CH(chan))) | \
++				val << IBCTRL_CH(chan))
++
++enum samv7_conversion_mode_sel {
++	SAMV7_DAC_CONV_HIGH_POWER,
++	SAMV7_DAC_CONV_LOW_POWER,
++	SAMV7_DAC_CONV_BYPASS,
++};
++
++struct samv7_dac {
++	struct clk 	*clk;
++	struct device 	*dev;
++	u32 		vref;
++	unsigned long	channels_mask;
++	enum samv7_conversion_mode_sel conv_mode;
++	void __iomem 	*regs;
++};
++
++static int samv7_set_conversion_mode(struct iio_dev *indio_dev,
++				const struct iio_chan_spec *chan,
++				unsigned int mode)
++{
++	struct samv7_dac *info = iio_priv(indio_dev);
++	u32 val;
++
++	mutex_lock(&indio_dev->mlock);
++
++	/* Channel must be disabled when changing modes */
++	writel(BIT(chan->channel), info->regs + SAMV7_DAC_CHDR);
++
++	info->conv_mode = mode;
++	val = readl(info->regs + SAMV7_DAC_ACR);
++	switch (mode) {	
++	case SAMV7_DAC_CONV_HIGH_POWER:
++		val = IBCTRL(val, chan->channel, IBCTRL_HIGH_POWER);
++		break;
++
++	case SAMV7_DAC_CONV_LOW_POWER:
++		val = IBCTRL(val, chan->channel, IBCTRL_LOW_POWER);
++		break;
++
++	case SAMV7_DAC_CONV_BYPASS:
++		val = IBCTRL(val, chan->channel, IBCTRL_BYPASS);
++		break;
++	}
++    
++	writel(val, info->regs + SAMV7_DAC_ACR);
++	writel(BIT(chan->channel), info->regs + SAMV7_DAC_CHER);
++
++	mutex_unlock(&indio_dev->mlock);
++
++	return 0;
++}
++
++static int samv7_get_conversion_mode(struct iio_dev *indio_dev,
++				const struct iio_chan_spec *chan)
++{
++	struct samv7_dac *info = iio_priv(indio_dev);
++
++	return info->conv_mode;
++}
++
++static const char * const samv7_conv_modes[] = { 
++	"high-power", "low-power", "bypass" };
++
++static const struct iio_enum samv7_conversion_mode = {
++	.items = samv7_conv_modes,
++	.num_items = ARRAY_SIZE(samv7_conv_modes),
++	.get = samv7_get_conversion_mode,
++	.set = samv7_set_conversion_mode,
++};
++
++static const struct iio_chan_spec_ext_info samv7_ext_info[] = {
++	IIO_ENUM("conversion_mode", IIO_SHARED_BY_DIR,
++		&samv7_conversion_mode),
++	{},
++};
++
++static int samv7_dac_read_raw(struct iio_dev *indio_dev,
++				struct iio_chan_spec const *chan,
++				int *val, int *val2, long mask)
++{
++	struct samv7_dac *dac = iio_priv(indio_dev);
++
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		/* Channel data register is write only */
++		*val = 0;
++		return IIO_VAL_INT;
++
++	case IIO_CHAN_INFO_SCALE:
++		*val = dac->vref / 1000;
++		*val2 = 12;
++		return IIO_VAL_FRACTIONAL_LOG2;
++	}
++
++	return -EINVAL;
++}
++
++static int samv7_dac_write_raw(struct iio_dev *indio_dev,
++				 struct iio_chan_spec const *chan,
++				 int val, int val2, long mask)
++{
++	struct samv7_dac *info = iio_priv(indio_dev);
++
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		mutex_lock(&indio_dev->mlock);
++		writel(DAC_DATx(val), info->regs + DAC_CDRx(chan->channel));
++		mutex_unlock(&indio_dev->mlock);
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static const struct iio_info samv7_dac_info = {
++	.read_raw = samv7_dac_read_raw,
++	.write_raw = samv7_dac_write_raw,
++	.driver_module = THIS_MODULE,
++};
++
++static int samv7_dac_init(struct iio_dev *idev)
++{
++	struct samv7_dac *info = iio_priv(idev);
++	struct iio_chan_spec *chan_array;
++	int bit, idx = 0;
++	u32 prescal, f_per, reg;
++
++	idev->num_channels = bitmap_weight(&info->channels_mask,
++					   SAMV7_DAC_CHANNELS) + 1;
++
++	chan_array = devm_kzalloc(&idev->dev,
++				  ((idev->num_channels + 1) *
++					sizeof(struct iio_chan_spec)),
++				  GFP_KERNEL);
++
++	if (!chan_array)
++		return -ENOMEM;
++
++	/* datasheet: pres = (f_per / f_dac) - 2 */
++	f_per = clk_get_rate(info->clk);
++	prescal = DIV_ROUND_UP(f_per, SAMV7_DAC_MAX_CLOCK_HZ) - 2;
++
++	writel(DAC_SWRST, info->regs + SAMV7_DAC_CR);
++	writel(PRESCALE_MASK(prescal) << PRESCALE_SHIFT, 
++		info->regs + SAMV7_DAC_MR);
++
++	info->conv_mode = SAMV7_DAC_CONV_BYPASS;
++
++	for_each_set_bit(bit, &info->channels_mask, SAMV7_DAC_CHANNELS) {
++		struct iio_chan_spec *chan = chan_array + idx;
++
++		chan->type = IIO_VOLTAGE;
++		chan->indexed = 1;
++		chan->output = 1;
++		chan->channel = bit;
++		chan->info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE);
++		chan->info_mask_separate = BIT(IIO_CHAN_INFO_RAW);
++		chan->ext_info = samv7_ext_info;
++
++		/* Set Analog Current Control to BYPASS by default */ 
++		reg = readl(info->regs + SAMV7_DAC_ACR);
++		reg = IBCTRL(reg, chan->channel, IBCTRL_BYPASS);
++		writel(reg, info->regs + SAMV7_DAC_ACR);
++
++		writel(BIT(chan->channel), info->regs + SAMV7_DAC_CHER);
++		idx++;
++	}
++
++	dev_dbg(info->dev, "f_per: %d, prescal: %d, MR: 0x%x, ACR: 0x%x\n", 
++	    f_per, prescal, readl(info->regs + SAMV7_DAC_MR), 
++	    readl(info->regs + SAMV7_DAC_ACR));
++
++	idev->channels = chan_array;
++	return idev->num_channels;
++}
++
++static int samv7_dac_probe(struct platform_device *pdev)
++{
++	struct iio_dev *indio_dev;
++	struct samv7_dac *info;
++	struct device_node *node = pdev->dev.of_node;
++	struct resource *mem;
++	int ret;
++	u32 prop;
++
++	indio_dev = devm_iio_device_alloc(&pdev->dev,
++					sizeof(struct samv7_dac));
++	if (!indio_dev) {
++		dev_err(&pdev->dev, "failed allocating iio device\n");
++		return -ENOMEM;
++	}
++
++	info = iio_priv(indio_dev);
++	info->dev = &pdev->dev;
++
++	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	info->regs = devm_ioremap_resource(&pdev->dev, mem);
++	if (IS_ERR(info->regs))
++		return PTR_ERR(info->regs);
++
++	info->clk = devm_clk_get(&pdev->dev, "dac_clk");
++	if (IS_ERR(info->clk)) {
++		dev_err(&pdev->dev, "failed getting clock, err = %ld\n",
++			PTR_ERR(info->clk));
++		return PTR_ERR(info->clk);
++	}
++
++	if (of_property_read_u32(node, "atmel,dac-vref", &prop)) {
++		dev_err(&pdev->dev, 
++			"missing value for atmel,dac-vref\n");
++		ret = -EINVAL;
++		goto error_iio_device_register;
++	}
++	info->vref = prop;
++
++	if (of_property_read_u32(node, "atmel,channel-mask", &prop)) {
++		dev_err(&pdev->dev, 
++			"missing value for atmel,channel-mask\n");
++		ret = -EINVAL;
++		goto error_iio_device_register;
++	}
++	info->channels_mask = prop;
++
++	platform_set_drvdata(pdev, indio_dev);
++
++	indio_dev->name = dev_name(&pdev->dev);
++	indio_dev->dev.parent = &pdev->dev;
++	indio_dev->dev.of_node = node;
++	indio_dev->info = &samv7_dac_info;
++	indio_dev->modes = INDIO_DIRECT_MODE;
++
++	ret = clk_prepare_enable(info->clk);
++	if (ret) {
++		dev_err(&pdev->dev,
++			"could not prepare or enable the clock\n");
++		return ret;
++	}
++
++	ret = samv7_dac_init(indio_dev);
++	if (ret < 0) {
++		dev_err(&pdev->dev, "couldn't initialize the channel(s)\n");
++		goto error_iio_device_register;
++	}
++
++	ret = iio_device_register(indio_dev);
++	if (ret) {
++		dev_err(&pdev->dev, "couldn't register the device\n");
++		goto error_iio_device_register;
++	}
++
++	dev_info(&pdev->dev, "version: 0x%x\n",
++		 readl_relaxed(info->regs + SAMV7_DAC_VERSION));
++
++	return 0;
++
++error_iio_device_register:
++	clk_disable_unprepare(info->clk);
++
++	return ret;
++}
++
++static int samv7_dac_remove(struct platform_device *pdev)
++{
++	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
++	struct samv7_dac *info = iio_priv(indio_dev);
++	int bit;
++
++	for_each_set_bit(bit, &info->channels_mask, SAMV7_DAC_CHANNELS)
++		writel(BIT(bit), info->regs + SAMV7_DAC_CHDR);
++
++	iio_device_unregister(indio_dev);
++	clk_disable_unprepare(info->clk);
++
++	return 0;
++}
++
++static const struct of_device_id samv7_dac_match[] = {
++	{ .compatible = "atmel,samv7-dac" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, samv7_dac_match);
++
++static struct platform_driver samv7_dac_driver = {
++	.probe	= samv7_dac_probe,
++	.remove	= samv7_dac_remove,
++	.driver	= {
++		.name = "samv7_dac",
++		.of_match_table = samv7_dac_match,
++	},
++};
++module_platform_driver(samv7_dac_driver);
++
++MODULE_DESCRIPTION("Atmel SAMV7 DAC driver");
++MODULE_AUTHOR("Andras Szemzo <szemzo.andras@gmail.com>");
++MODULE_LICENSE("GPL v2");

@@ -1,0 +1,517 @@
+diff -urN linux-4.9.11/drivers/iio/adc/Kconfig linux-samv7-4.9.x-fdpic-mpu/drivers/iio/adc/Kconfig
+--- linux-4.9.11/drivers/iio/adc/Kconfig	2016-12-11 14:17:54.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/drivers/iio/adc/Kconfig	2017-02-13 06:32:15.000000000 -0500
+@@ -142,6 +142,16 @@
+ 	  To compile this driver as a module, choose M here: the module will be
+ 	  called at91-sama5d2_adc.
+ 
++config ATMEL_SAMV7_ADC
++	tristate "Atmel SAMV7 ADC"
++	depends on SOC_SAMV7
++	select SYSFS
++	help
++	  Say yes here to build support for Atmel SAMV7 ADC.
++
++	  To compile this driver as a module, choose M here: the module will be
++	  called atmel-samv7_adc.
++
+ config AXP288_ADC
+ 	tristate "X-Powers AXP288 ADC driver"
+ 	depends on MFD_AXP20X
+diff -urN linux-4.9.11/drivers/iio/adc/Makefile linux-samv7-4.9.x-fdpic-mpu/drivers/iio/adc/Makefile
+--- linux-4.9.11/drivers/iio/adc/Makefile	2016-12-11 14:17:54.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/drivers/iio/adc/Makefile	2017-02-13 06:32:15.000000000 -0500
+@@ -15,6 +15,7 @@
+ obj-$(CONFIG_AD799X) += ad799x.o
+ obj-$(CONFIG_AT91_ADC) += at91_adc.o
+ obj-$(CONFIG_AT91_SAMA5D2_ADC) += at91-sama5d2_adc.o
++obj-$(CONFIG_ATMEL_SAMV7_ADC) += atmel-samv7_adc.o
+ obj-$(CONFIG_AXP288_ADC) += axp288_adc.o
+ obj-$(CONFIG_BCM_IPROC_ADC) += bcm_iproc_adc.o
+ obj-$(CONFIG_BERLIN2_ADC) += berlin2-adc.o
+diff -urN linux-4.9.11/drivers/iio/adc/atmel-samv7_adc.c linux-samv7-4.9.x-fdpic-mpu/drivers/iio/adc/atmel-samv7_adc.c
+--- linux-4.9.11/drivers/iio/adc/atmel-samv7_adc.c	1969-12-31 19:00:00.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/drivers/iio/adc/atmel-samv7_adc.c	2017-02-08 09:00:23.000000000 -0500
+@@ -0,0 +1,482 @@
++/*
++ * Atmel ADC driver for SAMV7 SoC.
++ *
++ * Based on:
++ * Atmel ADC driver for SAMA5D2 devices and compatible.
++ *
++ * Copyright (C) 2015 Atmel,
++ *               2015 Ludovic Desroches <ludovic.desroches@atmel.com>
++ *
++ * This software is licensed under the terms of the GNU General Public
++ * License version 2, as published by the Free Software Foundation, and
++ * may be copied, distributed, and modified under those terms.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#define DEBUG
++
++#include <linux/bitops.h>
++#include <linux/clk.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/sched.h>
++#include <linux/wait.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/sysfs.h>
++
++#define SAMV7_ADC_CR		0x00
++#define	SAMV7_ADC_CR_SWRST	BIT(0)
++#define	SAMV7_ADC_CR_START	BIT(1)
++#define SAMV7_ADC_MR			0x04
++#define	SAMV7_ADC_MR_TRGEN		BIT(0)
++#define	SAMV7_ADC_MR_TRGSEL(v)		((v) << 1)
++#define	SAMV7_ADC_MR_TRGSEL_TRIG0	0
++#define	SAMV7_ADC_MR_TRGSEL_TRIG1	1
++#define	SAMV7_ADC_MR_TRGSEL_TRIG2	2
++#define	SAMV7_ADC_MR_TRGSEL_TRIG3	3
++#define	SAMV7_ADC_MR_TRGSEL_TRIG4	4
++#define	SAMV7_ADC_MR_TRGSEL_TRIG5	5
++#define	SAMV7_ADC_MR_TRGSEL_TRIG6	6
++#define	SAMV7_ADC_MR_TRGSEL_TRIG7	7
++#define	SAMV7_ADC_MR_SLEEP		BIT(5)
++#define	SAMV7_ADC_MR_FWUP		BIT(6)
++#define	SAMV7_ADC_MR_PRESCAL(v)		((v) << SAMV7_ADC_MR_PRESCAL_OFFSET)
++#define	SAMV7_ADC_MR_PRESCAL_OFFSET	8
++#define	SAMV7_ADC_MR_PRESCAL_MAX	0xff
++#define	SAMV7_ADC_MR_STARTUP(v)		((v) << 16)
++#define	SAMV7_ADC_MR_ONE		BIT(23)
++#define	SAMV7_ADC_MR_TRACKTIM(v)	((v) << 24)
++#define	SAMV7_ADC_MR_TRACKTIM_MAX	0x0f
++#define	SAMV7_ADC_MR_TRANSFER(v)	((v) << 28)
++#define	SAMV7_ADC_MR_TRANSFER_MAX	0x3
++#define	SAMV7_ADC_MR_USEQ		BIT(31)
++#define SAMV7_ADC_EMR			0x08
++#define	SAMV7_ADC_EMR_TAG		BIT(24)
++#define	SAMV7_ADC_EMR_STM		BIT(25)
++
++#define SAMV7_ADC_CHER		0x14
++#define SAMV7_ADC_CHDR		0x18
++#define SAMV7_ADC_CHSR		0x1C
++#define SAMV7_ADC_LCDR		0x20
++#define SAMV7_ADC_IER		0x24
++#define SAMV7_ADC_IxR_DRDY	BIT(24)
++#define SAMV7_ADC_IDR		0x28
++#define SAMV7_ADC_IMR		0x2c
++#define SAMV7_ADC_ISR		0x30
++#define SAMV7_ADC_CGR		0x54
++#define SAMV7_ADC_DIFFR	0x60
++#define SAMV7_ADC_CSELR	0x64
++#define SAMV7_ADC_COCR		0x6c
++#define SAMV7_ADC_ACR		0x94
++#define SAMV7_ADC_ACR_PGA0EN 	BIT(2)
++#define SAMV7_ADC_ACR_PGA1EN 	BIT(3)
++#define	SAMV7_ADC_ACR_BIAS(v)	((v) << 8)
++#define SAMV7_ADC_VERSION	0xfc
++
++#define AFEC_MIN_CLOCK_HZ	4000000
++#define AFEC_MAX_CLOCK_HZ	40000000
++#define AFEC_CONVERSION_TIME	23
++
++#define AT91_SAMV7_ADC_CHAN(num)				\
++	{								\
++		.type = IIO_VOLTAGE,					\
++		.channel = num,						\
++		.scan_type = {						\
++			.sign = 'u',					\
++			.realbits = 12,					\
++		},							\
++		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),		\
++		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),	\
++		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),\
++		.datasheet_name = "CH"#num,				\
++		.indexed = 1,						\
++	}
++
++#define at91_adc_readl(st, reg)		readl_relaxed(st->base + reg)
++#define at91_adc_writel(st, reg, val)	writel_relaxed(val, st->base + reg)
++
++struct at91_adc_soc_info {
++	unsigned int startup_time;
++	unsigned int min_sample_rate;
++	unsigned int max_sample_rate;
++};
++
++struct at91_adc_state {
++	void __iomem			*base;
++	int				irq;
++	struct clk			*per_clk;
++	int				vref_mv;
++	const struct iio_chan_spec	*chan;
++	bool				conversion_done;
++	u32				conversion_value;
++	struct at91_adc_soc_info	soc_info;
++	wait_queue_head_t		wq_data_available;
++	/*
++	 * lock to prevent concurrent 'single conversion' requests through
++	 * sysfs.
++	 */
++	struct mutex			lock;
++};
++
++static const struct iio_chan_spec at91_adc_channels[] = {
++	AT91_SAMV7_ADC_CHAN(0),
++	AT91_SAMV7_ADC_CHAN(1),
++	AT91_SAMV7_ADC_CHAN(2),
++	AT91_SAMV7_ADC_CHAN(3),
++	AT91_SAMV7_ADC_CHAN(4),
++	AT91_SAMV7_ADC_CHAN(5),
++	AT91_SAMV7_ADC_CHAN(6),
++	AT91_SAMV7_ADC_CHAN(7),
++	AT91_SAMV7_ADC_CHAN(8),
++	AT91_SAMV7_ADC_CHAN(9),
++	AT91_SAMV7_ADC_CHAN(10),
++	AT91_SAMV7_ADC_CHAN(11),
++};
++
++static unsigned int at91_adc_startup_time(unsigned int startup_time_min,
++				      unsigned int adc_clk_khz)
++{
++	const unsigned int startup_lookup[] = {
++		  0,   8,  16,  24,
++		 64,  80,  96, 112,
++		512, 576, 640, 704,
++		768, 832, 896, 960
++		};
++	unsigned int ticks_min, i;
++
++	/*
++	 * Since the adc frequency is checked before, there is no reason
++	 * to not meet the startup time constraint.
++	 */
++
++	ticks_min = startup_time_min * adc_clk_khz / 1000;
++	for (i = 0; i < ARRAY_SIZE(startup_lookup); i++)
++		if (startup_lookup[i] >= ticks_min)
++			break;
++
++	return i;
++}
++
++
++static int at91_adc_setup_samp_freq(struct at91_adc_state *st, 
++				    unsigned int sample_freq)
++{
++	struct iio_dev *indio_dev = iio_priv_to_dev(st);
++	unsigned int f_per, prescal, startup, afec_clk;
++
++	f_per = clk_get_rate(st->per_clk);
++/*
++	f_per: 150000000
++	sample_freq: 15000
++	prescale: 
++
++	afec_clk:	(f_per / PRESCALE) + 1	
++	sample_freq * 23 = (f_per / PRESCALE) + 1	
++	(sample_freq * 23) - 1 = f_per / PRESCALE
++
++	PRESCALE = f_per / (sample_freq * 23) - 1
++
++	MAX_SAMPLE_FREQ = ((f_per / PRESCALE) + 1) / 23 = 
++	(150000000 / (1 + 1)) / 23
++	MAX_SAMPLE_FREQ = = 1740000
++	MIN_SAMPLE_FREQ = = 174000
++
++*/
++	afec_clk = sample_freq * AFEC_CONVERSION_TIME;
++	if (afec_clk > AFEC_MAX_CLOCK_HZ || afec_clk < AFEC_MIN_CLOCK_HZ)
++		return -1;
++	
++	prescal = DIV_ROUND_UP(f_per, afec_clk) - 1;
++	startup = at91_adc_startup_time(st->soc_info.startup_time, 
++					afec_clk / 1000);
++
++	at91_adc_writel(st, SAMV7_ADC_MR, 
++			SAMV7_ADC_MR_ONE
++			| SAMV7_ADC_MR_TRACKTIM(2)
++			| SAMV7_ADC_MR_TRANSFER(1)
++			| SAMV7_ADC_MR_STARTUP(startup)
++			| SAMV7_ADC_MR_PRESCAL(prescal));
++
++	dev_dbg(&indio_dev->dev, "freq: %u, startup: %u, prescal: %u\n", 
++		    sample_freq, startup, prescal);
++
++	return 0;
++}
++
++static unsigned int at91_adc_get_sample_freq(struct at91_adc_state *st)
++{
++	unsigned int f_adc, f_per = clk_get_rate(st->per_clk);
++	unsigned int mr, prescal;
++
++	mr = at91_adc_readl(st, SAMV7_ADC_MR);
++	prescal = (mr >> SAMV7_ADC_MR_PRESCAL_OFFSET)
++		  & SAMV7_ADC_MR_PRESCAL_MAX;
++
++	f_adc = f_per / (prescal + 1) / AFEC_CONVERSION_TIME;
++
++	return f_adc;
++}
++
++static irqreturn_t at91_adc_interrupt(int irq, void *private)
++{
++	struct iio_dev *indio = private;
++	struct at91_adc_state *st = iio_priv(indio);
++	u32 status = at91_adc_readl(st, SAMV7_ADC_ISR);
++	u32 imr = at91_adc_readl(st, SAMV7_ADC_IMR);
++
++	if (status & imr) {
++		st->conversion_value = at91_adc_readl(st, 
++					SAMV7_ADC_LCDR) & 0xFFFF;
++		st->conversion_done = true;
++		wake_up_interruptible(&st->wq_data_available);
++		return IRQ_HANDLED;
++	}
++
++	return IRQ_NONE;
++}
++
++static int at91_adc_read_raw(struct iio_dev *indio_dev,
++			     struct iio_chan_spec const *chan,
++			     int *val, int *val2, long mask)
++{
++	struct at91_adc_state *st = iio_priv(indio_dev);
++	int ret;
++
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		mutex_lock(&st->lock);
++
++		st->chan = chan;
++
++		at91_adc_writel(st, SAMV7_ADC_CSELR, chan->channel);
++    		/*
++        	 * Because the internal AFEC offset is 0x200, 
++		 * it should cancel it and shift down to 0.
++        	 */
++		at91_adc_writel(st, SAMV7_ADC_COCR, 0x200);
++		at91_adc_writel(st, SAMV7_ADC_CHER, BIT(chan->channel));
++		at91_adc_writel(st, SAMV7_ADC_IER, SAMV7_ADC_IxR_DRDY);
++		at91_adc_writel(st, SAMV7_ADC_CR, SAMV7_ADC_CR_START);
++
++		ret = wait_event_interruptible_timeout(st->wq_data_available,
++						       st->conversion_done,
++						       msecs_to_jiffies(1000));
++		if (ret == 0)
++			ret = -ETIMEDOUT;
++
++		if (ret > 0) {
++			*val = st->conversion_value;
++			ret = IIO_VAL_INT;
++			st->conversion_done = false;
++		}
++
++		at91_adc_writel(st, SAMV7_ADC_IDR, SAMV7_ADC_IxR_DRDY);
++		at91_adc_writel(st, SAMV7_ADC_CHDR, BIT(chan->channel));
++
++		mutex_unlock(&st->lock);
++		return ret;
++
++	case IIO_CHAN_INFO_SCALE:
++		*val = st->vref_mv;
++		*val2 = chan->scan_type.realbits;
++		return IIO_VAL_FRACTIONAL_LOG2;
++
++	case IIO_CHAN_INFO_SAMP_FREQ:
++		*val = at91_adc_get_sample_freq(st);
++		return IIO_VAL_INT;
++
++	default:
++		return -EINVAL;
++	}
++}
++
++static int at91_adc_write_raw(struct iio_dev *indio_dev,
++			      struct iio_chan_spec const *chan,
++			      int val, int val2, long mask)
++{
++	struct at91_adc_state *st = iio_priv(indio_dev);
++
++	if (mask != IIO_CHAN_INFO_SAMP_FREQ)
++		return -EINVAL;
++
++	if (val < st->soc_info.min_sample_rate ||
++	    val > st->soc_info.max_sample_rate)
++		return -EINVAL;
++
++	if (at91_adc_setup_samp_freq(st, val) < 0)
++		return -EINVAL;
++
++	return 0;
++}
++
++static const struct iio_info at91_adc_info = {
++	.read_raw = &at91_adc_read_raw,
++	.write_raw = &at91_adc_write_raw,
++	.driver_module = THIS_MODULE,
++};
++
++static int at91_adc_probe(struct platform_device *pdev)
++{
++	struct iio_dev *indio_dev;
++	struct at91_adc_state *st;
++	struct resource	*res;
++	int ret;
++
++	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*st));
++	if (!indio_dev)
++		return -ENOMEM;
++
++	indio_dev->dev.parent = &pdev->dev;
++	indio_dev->name = dev_name(&pdev->dev);
++	indio_dev->modes = INDIO_DIRECT_MODE;
++	indio_dev->info = &at91_adc_info;
++	indio_dev->channels = at91_adc_channels;
++	indio_dev->num_channels = ARRAY_SIZE(at91_adc_channels);
++
++	st = iio_priv(indio_dev);
++
++	ret = of_property_read_u32(pdev->dev.of_node,
++				   "atmel,min-sample-rate-hz",
++				   &st->soc_info.min_sample_rate);
++	if (ret) {
++		dev_err(&pdev->dev,
++		    "invalid or missing value for atmel,min-sample-rate-hz\n");
++		return ret;
++	}
++
++	ret = of_property_read_u32(pdev->dev.of_node,
++				   "atmel,max-sample-rate-hz",
++				   &st->soc_info.max_sample_rate);
++	if (ret) {
++		dev_err(&pdev->dev,
++		    "invalid or missing value for atmel,max-sample-rate-hz\n");
++		return ret;
++	}
++
++	ret = of_property_read_u32(pdev->dev.of_node, "atmel,startup-time-us",
++				   &st->soc_info.startup_time);
++	if (ret) {
++		dev_err(&pdev->dev,
++		    "invalid or missing value for atmel,startup-time-us\n");
++		return ret;
++	}
++
++	init_waitqueue_head(&st->wq_data_available);
++	mutex_init(&st->lock);
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	if (!res)
++		return -EINVAL;
++
++	st->base = devm_ioremap_resource(&pdev->dev, res);
++	if (IS_ERR(st->base))
++		return PTR_ERR(st->base);
++
++	st->irq = platform_get_irq(pdev, 0);
++	if (st->irq <= 0) {
++		if (!st->irq)
++			st->irq = -ENXIO;
++
++		return st->irq;
++	}
++
++	st->per_clk = devm_clk_get(&pdev->dev, "adc_clk");
++	if (IS_ERR(st->per_clk))
++		return PTR_ERR(st->per_clk);
++
++	if (of_property_read_u32(pdev->dev.of_node, "atmel,adc-vref", 
++		    &st->vref_mv)) {
++
++		dev_err(&pdev->dev, 
++		    "invalid or missing value for atmel,adc-vref\n");
++		ret = -EINVAL;
++		return ret;
++	}
++
++	if (st->vref_mv <= 0) {
++		ret = -EINVAL;
++		return ret;
++	}
++
++	ret = devm_request_irq(&pdev->dev, st->irq, 
++		at91_adc_interrupt, 0, pdev->dev.driver->name, indio_dev);
++
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(st->per_clk);
++	if (ret)
++		return ret;
++
++	ret = iio_device_register(indio_dev);
++	if (ret < 0)
++		goto per_clk_disable_unprepare;
++
++	at91_adc_writel(st, SAMV7_ADC_CR, SAMV7_ADC_CR_SWRST);
++	at91_adc_writel(st, SAMV7_ADC_MR, 0x0);
++	at91_adc_writel(st, SAMV7_ADC_IDR, 0xffffffff);
++
++	at91_adc_setup_samp_freq(st, st->soc_info.min_sample_rate);
++
++	at91_adc_writel(st, SAMV7_ADC_EMR, 
++			    SAMV7_ADC_EMR_STM | SAMV7_ADC_EMR_TAG);
++
++	at91_adc_writel(st, SAMV7_ADC_ACR, 
++			    SAMV7_ADC_ACR_PGA0EN | 
++			    SAMV7_ADC_ACR_PGA1EN | 
++			    SAMV7_ADC_ACR_BIAS(1));
++
++	at91_adc_writel(st, SAMV7_ADC_DIFFR, 0);
++	at91_adc_writel(st, SAMV7_ADC_CGR, 0);
++
++	dev_info(&pdev->dev, "version: 0x%x\n",
++		 readl_relaxed(st->base + SAMV7_ADC_VERSION));
++
++	return 0;
++
++per_clk_disable_unprepare:
++	clk_disable_unprepare(st->per_clk);
++
++	return ret;
++}
++
++static int at91_adc_remove(struct platform_device *pdev)
++{
++	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
++	struct at91_adc_state *st = iio_priv(indio_dev);
++
++	iio_device_unregister(indio_dev);
++	clk_disable_unprepare(st->per_clk);
++
++	return 0;
++}
++
++static const struct of_device_id at91_adc_dt_match[] = {
++	{
++		.compatible = "atmel,samv7-adc",
++	}, {
++		/* sentinel */
++	}
++};
++MODULE_DEVICE_TABLE(of, at91_adc_dt_match);
++
++static struct platform_driver at91_adc_driver = {
++	.probe = at91_adc_probe,
++	.remove = at91_adc_remove,
++	.driver = {
++		.name = "samv7_adc",
++		.of_match_table = at91_adc_dt_match,
++	},
++};
++module_platform_driver(at91_adc_driver)
++
++MODULE_AUTHOR("Andras Szemzo <szemzo.andras@gmail.com>");
++MODULE_DESCRIPTION("Atmel SAMV7 ADC driver");
++MODULE_LICENSE("GPL v2");

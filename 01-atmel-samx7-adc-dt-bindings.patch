@@ -1,0 +1,30 @@
+diff -urN linux-4.9.11/Documentation/devicetree/bindings/iio/adc/atmel-samv7_adc.txt linux-samv7-4.9.x-fdpic-mpu/Documentation/devicetree/bindings/iio/adc/atmel-samv7_adc.txt
+--- linux-4.9.11/Documentation/devicetree/bindings/iio/adc/atmel-samv7_adc.txt	1969-12-31 19:00:00.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/Documentation/devicetree/bindings/iio/adc/atmel-samv7_adc.txt	2017-02-13 06:32:11.000000000 -0500
+@@ -0,0 +1,26 @@
++* Atmel SAMV7 Analog to Digital Converter
++
++Required properties:
++  - compatible: Should be "atmel,samv7-adc".
++  - reg: Should contain ADC registers location and length.
++  - interrupts: Should contain the IRQ line for the ADC.
++  - clocks: phandle to ADC peripherial clock.
++  - clock-names: Must be "adc_clk".
++  - atmel,adc-vref: Reference voltage in millivolts for the conversions
++  - atmel,min-sample-rate-hz: Minimum sampling rate, it depends on SoC.
++  - atmel,max-sample-rate-hz: Maximum sampling rate, it depends on SoC.
++  - atmel,startup-time-ms: Startup time expressed in ms, it depends on SoC.
++
++Example:
++
++adc0: adc@4003c000 {
++	compatible = "atmel,samv7-adc";
++	reg = <0x4003c000 0x4000>;
++	interrupts = <29>;
++	atmel,min-sample-rate-hz = <200000>;
++	atmel,max-sample-rate-hz = <1740000>;
++	atmel,adc-vref = <3300>;
++	atmel,startup-time-us = <4>;
++	clock-names = "adc_clk";
++	clocks = <&afec0_clk>;
++};

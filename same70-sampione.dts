@@ -1,0 +1,389 @@
+/*
+ * samx7-sampione.dts - Device Tree file for SAMX7-SAMPIONE board
+ *
+ *  Copyright (C) 2016 Andras Szemzo <szemzo.andras@gmail.com>
+ *
+ * Licensed under GPLv2 or later.
+ */
+
+#include "samv7.dtsi"
+#include "samv7_macb.dtsi"
+
+
+/ {
+	model = "SAME70-sampione board";
+	compatible = "atmel,same7";
+
+	chosen {
+/*
+		bootargs = "console=ttyS1,115200 root=/dev/mmcblk0p2 rw init=/linuxrc rootwait";
+*/
+		bootargs = "console=ttyS1,115200 rootfstype=ubifs rw ubi.mtd=2 root=ubi0:rootfs";
+		stdout-path = "serial1:115200n8";
+	};
+
+	memory {
+		reg = <0x70000000 0x3e00000>;
+	};
+
+	reserved-memory {
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		ranges;
+
+		linux,dma {
+			compatible = "shared-dma-pool";
+			reg = <0x73e00000 0x200000>;
+			no-map;
+			linux,dma-default;
+		};
+	};
+
+	clocks {
+		clk_slck: clk-slck {
+			clock-frequency = <32768>;
+		};
+
+		main_xtal: main_xtal {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <12000000>;
+		};
+
+		clk_mck: clk-mck {
+			clock-frequency = <150000000>;
+		};
+
+		clk_pck1: clk-pck1 {
+			#clock-cells = <0>;
+			compatible = "fixed-clock";
+			clock-frequency = <25000000>;
+		};
+	};
+
+	soc {
+		pinctrl@400e0e00 {
+			atmel,mux-mask = <
+				/*    A          B          C          D  */
+				 0xffe3ff3e 0xffe807fa 0xdffc067f 0xdfe80002 /* pioA */
+				 0x0000303f 0x0000303a 0x0000300f 0x0000103f /* pioB */
+				 0xffffffff 0x40087f00 0x40007000 0x00000000 /* pioC */
+				 0xdf7c1fff 0x1f7c1fff 0x3ffffeff 0x5f6019ff /* pioD */
+				 0x0000003f 0x00000000 0x00000000 0x00000000 /* pioE */
+			>;
+
+			uart0 {
+				pinctrl_uart0: uart0-0 {
+					atmel,pins =
+						<AT91_PIOA  9 AT91_PERIPH_A AT91_PINCTRL_NONE		/* PA9  periph A RXD */
+						 AT91_PIOA 10 AT91_PERIPH_A AT91_PINCTRL_PULL_UP	/* PA10 periph A TXD */
+						>;
+				};
+			};
+
+			uart1 {
+				pinctrl_uart1: uart1-0 {
+					atmel,pins =
+						<AT91_PIOA 5 AT91_PERIPH_C AT91_PINCTRL_NONE		/* PA5 periph C RXD */
+						 AT91_PIOA 6 AT91_PERIPH_C AT91_PINCTRL_PULL_UP		/* PA6 periph C TXD */
+						>;
+				};
+			};
+
+			uart2 {
+				pinctrl_uart2: uart2-0 {
+					atmel,pins =
+						<AT91_PIOD 25 AT91_PERIPH_C AT91_PINCTRL_NONE		/* PD25 periph C RXD */
+						 AT91_PIOD 26 AT91_PERIPH_C AT91_PINCTRL_PULL_UP	/* PD26 periph C TXD */
+						>;
+				};
+			};
+
+			uart3 {
+				pinctrl_uart3: uart3-0 {
+					atmel,pins =
+						<AT91_PIOD 28 AT91_PERIPH_A AT91_PINCTRL_NONE		/* PD28 periph A RXD */
+						 AT91_PIOD 30 AT91_PERIPH_A AT91_PINCTRL_PULL_UP	/* PD30 periph A TXD */
+						>;
+				};
+			};
+
+			uart4 {
+				pinctrl_uart4: uart4-0 {
+					atmel,pins =
+						<AT91_PIOD 18 AT91_PERIPH_C AT91_PINCTRL_NONE		/* PD18 periph C RXD */
+						 AT91_PIOD 19 AT91_PERIPH_C AT91_PINCTRL_PULL_UP	/* PD19 periph C TXD */
+						>;
+				};
+			};
+
+			macb {
+				pinctrl_macb_phy_irq: macb_phy_irq_0 {
+					atmel,pins =
+						<AT91_PIOC 11 AT91_PERIPH_GPIO AT91_PINCTRL_NONE>;
+				};
+			};
+
+			spi0 {
+				pinctrl_spi0_cs_0: spi0_cs_0 {
+					atmel,pins =
+						<AT91_PIOB 2 AT91_PERIPH_D AT91_PINCTRL_NONE>;
+				};
+
+				pinctrl_spi0_cs_2: spi0_cs_2 {
+					atmel,pins =
+						<AT91_PIOD 12 AT91_PERIPH_C AT91_PINCTRL_NONE>;
+				};
+			};
+		};
+
+		sram0: sram@2040000 {
+			compatible = "mmio-sram";
+			reg = <0x2040000 0x60000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0 0x2040000 0x60000>;
+
+			can1-mram@0 {
+			    reg = <0x0 0x4000>;
+			};
+		};
+
+		sram1: sram@40074000 {
+			compatible = "mmio-sram";
+			reg = <0x40074000 0x400>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0 0x40074000 0x400>;
+
+			backup@0 {
+			    reg = <0x0 0x400>;
+			    export;
+			    label = "backup-sram";
+			};
+		};
+
+		gpbr: syscon@400e1890 {
+			status = "ok";
+		};
+
+		rtt@400e1830 {
+			atmel,rtt-rtc-time-reg = <&gpbr 0x0>;
+			status = "ok";
+		};
+
+		can1: can@40034000 {
+			reg = <0x40034000 0x4000>, <0x20400000 0x4000>;
+			reg-names = "m_can", "message_ram";
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_can1_rx0 &pinctrl_can1_tx0>;
+			status = "ok";
+		};
+
+		pwm0: pwm@40020000 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_pwm0_pwmh0_2 &pinctrl_pwm0_pwmh1_2>;
+			status = "ok";
+		};
+
+		watchdog@400e1850 {
+			timeout-sec = <8>;
+			atmel,watchdog-type = "hardware";
+			atmel,reset-type = "all";
+			atmel,dbg-halt;
+			status = "ok";
+		};
+
+		tcb0: timer@4000c000 {
+			timer@0 {
+			    compatible = "atmel,tcb-timer";
+			    reg = <0>, <1>;
+			};
+
+			timer@2 {
+			    compatible = "atmel,tcb-timer";
+			    reg = <2>;
+			};
+		};
+
+		tcb1: timer@40010000 {
+			status = "ok";
+
+			tcb1_pwm2: pwm@2 {
+			    compatible = "atmel,tcb-pwm";
+			    #pwm-cells = <3>;
+			    reg = <2>;
+			    pinctrl-names = "default";
+			    pinctrl-0 = <>, <&pinctrl_tcb1_tiob5>;
+			};
+		};
+
+		dma: dma-controller@40078000 {
+			status = "ok";
+		};
+
+		qspi: qspi@4007c000 {
+			status = "ok";
+
+			flash: m25p80@0 {
+            			#address-cells = <1>;
+            			#size-cells = <1>;
+				compatible = "micron,n25q512a", "jedec,spi-nor";
+				reg = <0>;						
+				spi-max-frequency = <75000000>;
+
+            			partition@0 {
+                    		    label = "qspi-linux-kernel";
+                    		    reg = <0x0 0x400000>;
+            			};
+
+            			partition@400000 {
+                    		    label = "qspi-device-tree";
+                    		    reg = <0x400000 0x20000>;
+            			};
+
+            			partition@420000 {
+                    		    label = "qspi-rootfs";
+                    		    reg = <0x420000 0x3be0000>;
+            			};
+			};
+		};
+
+		aes@4006c000 {
+			status = "ok";
+		};
+
+		i2c0: i2c@40018000 {
+			status = "ok";
+		};
+/*
+    		i2c-gpio-0 {
+            	    compatible = "i2c-gpio";
+            	    gpios = <&pioA 3 GPIO_ACTIVE_HIGH
+                             &pioA 4 GPIO_ACTIVE_HIGH
+                    	    >;
+            	    i2c-gpio,sda-open-drain;
+            	    i2c-gpio,scl-open-drain;
+            	    i2c-gpio,delay-us = <2>;    
+            	    #address-cells = <1>;
+            	    #size-cells = <0>;
+            	    status = "ok";
+    		};
+*/
+		i2c2: i2c@40060000 {
+			status = "disabled";
+		};
+
+		macb: ethernet@40050000 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_macb_rmii &pinctrl_macb_phy_irq>;
+			local-mac-address = [02 97 2d 60 64 39];
+			status = "ok";
+
+			phy0: ethernet-phy@1 {
+				reg = <1>;
+				interrupt-parent = <&pioC>;
+				interrupts = <11 IRQ_TYPE_EDGE_FALLING>;
+				reset-gpios = <&pioC 10 GPIO_ACTIVE_HIGH>;
+			};
+		};
+
+		mmc0: mmc@40000000 {
+			status = "ok";
+
+			slot@0 {
+				reg = <0>;
+				bus-width = <4>;
+			};
+		};
+
+		spi0: spi@40008000 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_spi0 &pinctrl_spi0_cs_0 &pinctrl_spi0_cs_2>;
+			status = "ok";
+		};
+
+		trng@4007000 {
+			status = "ok";
+		};
+
+		rtc@400e1860 {
+			status = "ok";
+		};
+
+		usart0: serial@40024000 {
+			status = "ok";
+		};
+
+		usart1: serial@40028000 {
+			status = "ok";
+		};
+
+		uart0: serial@400e0800 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_uart0>;
+			status = "ok";
+		};
+
+		uart1: serial@400e0a00 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_uart1>;
+			status = "ok";
+		};
+
+		uart2: serial@400e1a00 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_uart2>;
+			status = "ok";
+		};
+
+		uart4: serial@400e1e00 {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_uart4>;
+			status = "ok";
+		};
+
+		dac: dac@40040000 {
+			atmel,channel-mask = <0x1>;
+			atmel,dac-vref = <3300>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_dac0>;
+			status = "ok";
+		};
+
+		adc0: adc@4003c000 {
+			atmel,adc-vref = <3300>;
+			atmel,startup-time-us = <4>;
+			status = "ok";
+		};
+
+		adc1: adc@40064000 {
+			atmel,adc-vref = <3300>;
+			atmel,startup-time-us = <4>;
+			status = "ok";
+		};
+	};
+
+	gpio_leds {
+		compatible = "gpio-leds";
+
+		status {
+			label = "green";
+			gpios = <&pioD 24 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "heartbeat";
+		};
+	};
+/*
+	pwm_leds {
+		compatible = "pwm-leds";
+
+		blue {
+			label = "pwm_blue";
+			pwms = <&tcb1_pwm2 1 10000000 PWM_POLARITY_INVERTED>;
+			max-brightness = <255>;
+			linux,default-trigger = "default-on";
+		};
+	};
+*/
+
+};

@@ -1,0 +1,25 @@
+diff -urN linux-4.9.11/Documentation/devicetree/bindings/iio/dac/atmel-samv7_dac.txt linux-samv7-4.9.x-fdpic-mpu/Documentation/devicetree/bindings/iio/dac/atmel-samv7_dac.txt
+--- linux-4.9.11/Documentation/devicetree/bindings/iio/dac/atmel-samv7_dac.txt	1969-12-31 19:00:00.000000000 -0500
++++ linux-samv7-4.9.x-fdpic-mpu/Documentation/devicetree/bindings/iio/dac/atmel-samv7_dac.txt	2017-02-13 06:52:27.000000000 -0500
+@@ -0,0 +1,21 @@
++Atmel SAMV7 Digital to Analog Converter bindings
++
++Required properties:
++- compatible: Should be "atmel,samv7-dac"
++- reg: Offset and length of the DACC peripherial
++- interrupts: Should contain the interrupt for the device
++- atmel,dac-vref: Reference voltage in millivolts for the conversions
++- atmel,channel-mask: The bitmask of the enabled channels
++- clocks: phandle to the DACC clock
++- clock-names: Must be "dac_clk"
++
++Example:
++dacc: dac@40040000 {
++	compatible = "atmel,samv7-dac";
++	reg = <0x40040000 0x4000>;
++	interrupts = <30>;
++	atmel,dac-vref = <3300>;
++	atmel,channel-mask = <0x3>;
++	clock-names = "dac_clk";
++	clocks = <&dacc_clk>;
++};

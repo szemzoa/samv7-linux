@@ -1,0 +1,57 @@
+/*
+ * samv7_macb.dtsi - Device Tree Include file for Atmel SAMV7 SoC with
+ * Ethernet interface.
+ *
+ * Copyright (C) 2017 Andras Szemzo <sza@esh.hu>
+ *
+ * Licensed under GPLv2.
+ */
+
+#include <dt-bindings/pinctrl/at91.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+	soc {
+		pinctrl@400e0e00 {
+			macb {
+			    pinctrl_macb_rmii: macb_rmii-0 {
+			    	atmel,pins =
+					<AT91_PIOD 0 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD0 periph A */
+					 AT91_PIOD 1 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD1 periph A */
+					 AT91_PIOD 2 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD2 periph A */
+					 AT91_PIOD 3 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD3 periph A */
+					 AT91_PIOD 4 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD4 periph A */
+					 AT91_PIOD 5 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD5 periph A */
+					 AT91_PIOD 6 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD6 periph A */
+					 AT91_PIOD 7 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD7 periph A */
+					 AT91_PIOD 8 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD8 periph A */
+					 AT91_PIOD 9 AT91_PERIPH_A AT91_PINCTRL_NONE	/* PD9 periph A */
+					 >;
+			    };
+			};
+		};
+		
+		pmc: pmc@400e0600 {
+			periphck {
+				macb_clk: macb_clk {
+					#clock-cells = <0>;
+					reg = <39>;
+				};
+			};
+		};
+
+		macb: ethernet@40050000 {
+			compatible = "atmel,samv7-gem";
+			reg = <0x40050000 0x4000>;
+			interrupts = <39 66 67>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			phy-mode = "rmii";
+			clocks = <&macb_clk>, <&macb_clk>;
+			clock-names = "hclk", "pclk";
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_macb_rmii &pinctrl_macb_phy_irq>;
+			status = "disabled";
+		};
+	};
+};
